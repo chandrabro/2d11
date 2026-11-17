@@ -1,0 +1,23 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Anim test</title>
+<style>body{margin:0;background:#2a2d34;color:#eee;font:12px sans-serif}.grid{display:flex;flex-wrap:wrap;gap:4px;padding:4px}figure{margin:0;text-align:center}canvas{background:linear-gradient(#9fd3f5,#e8f4fb 70%,#6ab04c 70%)}#err{color:#f66;white-space:pre-wrap}</style></head>
+<body><div id="err"></div><div class="grid" id="grid"></div>
+<script type="module">
+// ?list=bow,dig&t=0.3,0.6,0.9  -> one tile per action x time
+const q = new URLSearchParams(location.search);
+const err = document.getElementById('err'); window.addEventListener('error', (e) => { err.textContent += e.message + '\n'; });
+try {
+  const { drawCharacter } = await import('../js/engine/character.js');
+  const { presetAppearance } = await import('../js/engine/presets.js');
+  const { getAction, poseAt } = await import('../js/engine/actions.js');
+  const app = presetAppearance(q.get('preset') || 'custom_male');
+  const times = (q.get('t') || '0.5').split(',').map(Number);
+  for (const id of (q.get('list') || 'idle').split(',')) for (const t of times) {
+    const fig = document.createElement('figure'); const c = document.createElement('canvas'); c.width = 220; c.height = 300;
+    const cap = document.createElement('figcaption'); cap.textContent = id + ' @' + t; fig.append(c, cap); document.getElementById('grid').append(fig);
+    const a = getAction(id);
+    drawCharacter(c.getContext('2d'), app, poseAt(a, t * a.duration), { x: 110, y: 270, scale: 2.4, facing: 1, orientation: q.get('front') ? 'front' : 'side', t });
+  }
+} catch (e) { err.textContent += e.stack; }
+document.body.dataset.done = '1';
+</script></body></html>

@@ -2,13 +2,18 @@
 // (project, time) so preview and export produce identical pixels.
 
 import { drawSubtitle, showsSubtitle, defaultSubtitles } from './subtitles.js';
-import { STAGE_W, STAGE_H, clamp, lerp, ease, hash, rgba, roundRect, wrapText, fillRound, radGrad, linGrad } from './util.js';
+import { STAGE_W, STAGE_H, CHAR_PX_PER_UNIT, clamp, lerp, ease, smoothstep, hash, rgba, roundRect, wrapText, fillRound, radGrad, linGrad } from './util.js';
 import { getScene } from './scenes/index.js';
 import { getAction, poseAt } from './actions.js';
-import { drawCharacter, proportions } from './character.js';
+import { drawCharacter, proportions, lerpPose } from './character.js';
+import { EXPRESSIONS } from './face.js';
 import { groundShadow, rain, snow, fog, vignette, todOf, sunRays } from './scenery.js';
+import { actorStateAt, actorPlaceAt, itemTimeline } from './motion.js';
+import { drawActorFx, drawGroundMarks, drawGroundItems, drawFootprints, drawBreath } from './effects.js';
+import { castShadow, ambientLife } from './ambient.js';
+import { addLife, lifeStrength, talkLayer, listenLayer, lookAt, emotionFor, LISTENER_FACE, GESTURE_OK } from './life.js';
 
-export const CHAR_PX_PER_UNIT = 3.2; // 100 units -> 320 px at the front of the stage, scale 1
+export { CHAR_PX_PER_UNIT, actorStateAt };
 
 /** Camera presets. Values are in stage coordinates. zoom 1 = full stage. */
 export const CAMERA_PRESETS = {
@@ -26,7 +31,7 @@ export const CAMERA_PRESETS = {
   custom:    { name: 'Custom',          start: { x: 640, y: 360, zoom: 1 },    end: { x: 640, y: 360, zoom: 1 } },
 };
 
-export const TRANSITIONS = [['cut', 'Cut'], ['fade', 'Fade to black'], ['dissolve', 'Cross dissolve'], ['slide', 'Slide'], ['wipe', 'Wipe'], ['circle', 'Circle iris']];
+export const TRANSITIONS = [['cut', 'Cut'], ['fade', 'Fade to black'], ['dissolve', 'Cross dissolve'], ['slide', 'Slide (push)'], ['zoom', 'Zoom dissolve'], ['wipe', 'Wipe'], ['circle', 'Circle iris']];
 export const WEATHER = [['none', 'None'], ['rain', 'Rain'], ['snow', 'Snow'], ['fog', 'Fog'], ['sunrays', 'Sun rays'], ['leaves', 'Falling leaves']];
 export const TODS = [['day', 'Day'], ['dawn', 'Dawn'], ['sunset', 'Sunset'], ['night', 'Night']];
 
@@ -54,10 +59,16 @@ export function cameraAt(scene, local) {
   const start = cam.preset === 'custom' ? (cam.start || preset.start) : preset.start;
   const end = cam.preset === 'custom' ? (cam.end || cam.start || preset.end) : preset.end;
   const dur = Math.max(0.001, scene.duration);
-  const u = ease.inOut(clamp(local / dur, 0, 1));
+  const u = ease.sine(clamp(local / dur, 0, 1));
   let x = lerp(start.x, end.x, u), y = lerp(start.y, end.y, u), zoom = lerp(start.zoom, end.zoom, u);
   const shake = preset.shake || cam.shake || 0;
   if (shake) { x += Math.sin(local * 13.1) * 6 * shake + Math.sin(local * 7.3) * 3 * shake; y += Math.cos(local * 11.7) * 5 * shake; }
+  // a still shot is never dead still: a very slow push-in / drift (off for moving cameras, keyed screens and when cam.drift === false)
+  const still = start.x === end.x && start.y === end.y && start.zoom === end.zoom;
+  if (still && !shake && cam.drift !== false && dur >= 4 && !getScene(scene.background).chroma) {
+    const d = clamp(local / dur, 0, 1), dir = (scene.seed || 1) % 2 ? 1 : -1;
+    zoom *= 1 + 0.035 * d; x += dir * 14 * d; y -= 4 * d;
+  }
   return { x, y, zoom };
 }
 
@@ -71,14 +82,14 @@ export function autoFitCamera(scene, local, cam, aspect) {
   if (visW0 >= STAGE_W * 0.98 || !scene.actors || !scene.actors.length) return cam;
   const visW = visW0 / cam.zoom;
   const focusAt = (t) => {
-    const xs = scene.actors.map((a) => actorStateAt(a, t, scene).x);
+    const xs = scene.actors.map((a) => actorPlaceAt(a, t, scene).x);
     const min = Math.min(...xs), max = Math.max(...xs);
     if (max - min <= visW * 0.85) return (min + max) / 2; // everyone fits
     for (const d of scene.dialogs || []) { // follow the speaker
       if (d.actor >= 0 && d.actor < xs.length && t >= d.start && t < d.start + (d.duration || 2)) return xs[d.actor];
     }
     let mover = -1, best = 0; // else follow whoever is travelling the most
-    scene.actors.forEach((a, i) => { const s0 = actorStateAt(a, t, scene), s1 = actorStateAt(a, t + 0.4, scene); const v = Math.abs(s1.x - s0.x); if (v > best) { best = v; mover = i; } });
+    scene.actors.forEach((a, i) => { const s0 = actorPlaceAt(a, t, scene), s1 = actorPlaceAt(a, t + 0.4, scene); const v = Math.abs(s1.x - s0.x); if (v > best) { best = v; mover = i; } });
     if (mover >= 0 && best > 1) return xs[mover];
     return xs.reduce((p, q) => p + q, 0) / xs.length;
   };
@@ -88,52 +99,7 @@ export function autoFitCamera(scene, local, cam, aspect) {
   return { ...cam, x: clamp(fx, visW / 2, STAGE_W - visW / 2) };
 }
 
-// ---------- actor evaluation ----------
-/**
- * Returns the actor's state at local scene time: { x, y (stage coords of feet), facing, orientation, pose, action, scale }
- */
-export function actorStateAt(actor, local, scene) {
-  const segs = (actor.actions || []).slice().sort((a, b) => a.start - b.start);
-  let x = actor.x, y = actor.y, facing = actor.facing || 1;
-  let current = null, prevEnd = null;
-  for (const s of segs) {
-    const end = s.end ?? s.start + 2;
-    if (local >= end) { // completed segment: apply its end position
-      if (s.toX != null) x = s.toX; if (s.toY != null) y = s.toY;
-      if (s.toX != null && s.toX !== (s.fromX ?? x)) facing = s.toX >= (s.fromX ?? actor.x) ? 1 : -1;
-      if (s.facing) facing = s.facing;
-      prevEnd = s;
-      continue;
-    }
-    if (local >= s.start) { current = s; break; }
-    break;
-  }
-  let actionId = actor.idleAction || 'idle';
-  let actionTime = local;
-  let orientation = actor.orientation || 'side';
-  if (current) {
-    actionId = current.action;
-    actionTime = local - current.start;
-    const end = current.end ?? current.start + 2;
-    const u = clamp((local - current.start) / Math.max(0.001, end - current.start), 0, 1);
-    const fromX = x, fromY = y;
-    if (current.toX != null || current.toY != null) {
-      const tx = current.toX ?? fromX, ty = current.toY ?? fromY;
-      x = lerp(fromX, tx, u); y = lerp(fromY, ty, u);
-      if (Math.abs(tx - fromX) > 2 && !current.facing) facing = tx > fromX ? 1 : -1;
-      if (Math.abs(tx - fromX) > 2 && orientation === 'front' && !current.orientation) orientation = 'side'; // turn to walk, face the camera again when stopped
-    }
-    if (current.facing) facing = current.facing;
-    if (current.orientation) orientation = current.orientation;
-  } else if (prevEnd && prevEnd.holdLast !== false) {
-    // after the last segment, keep the final frame of a non-looping action (e.g. fallen, sleeping)
-    const act = getAction(prevEnd.action);
-    if (!act.loop && prevEnd.hold !== false) { actionId = prevEnd.action; actionTime = act.duration; }
-  }
-  const action = getAction(actionId);
-  const pose = poseAt(action, actionTime);
-  return { x, y, facing, orientation, pose, action, actionTime, segment: current };
-}
+// ---------- actor evaluation: see motion.js (easing, blending, objects) ----------
 
 // ---------- speech ----------
 export function activeDialog(scene, actorIndex, local, audioInfo) {
@@ -186,22 +152,31 @@ export function renderFrame(ctx, project, time, opts = {}) {
   const { index, scene, local } = sceneAt(project, time);
   ctx.save();
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
-  renderScene(ctx, project, index, local, W, H, opts);
   // transitions (into this scene)
   const tr = scene.transition || 'cut';
-  const trDur = Math.min(scene.transitionDuration || 0.7, scene.duration / 2);
-  if (tr !== 'cut' && index > 0 && local < trDur && !opts.noTransitions) {
-    const u = ease.inOut(local / trDur);
-    if (tr === 'fade') { ctx.fillStyle = `rgba(0,0,0,${1 - u})`; ctx.fillRect(0, 0, W, H); }
-    else if (tr === 'dissolve' || tr === 'slide' || tr === 'wipe' || tr === 'circle') {
-      const prev = project.scenes[index - 1];
-      ctx.save();
-      if (tr === 'dissolve') ctx.globalAlpha = 1 - u;
-      if (tr === 'slide') ctx.translate(-u * W, 0);
-      if (tr === 'wipe') { ctx.beginPath(); ctx.rect(u * W, 0, W, H); ctx.clip(); }
-      if (tr === 'circle') { ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.arc(W / 2, H / 2, u * Math.hypot(W, H) / 2, 0, Math.PI * 2, true); ctx.clip('evenodd'); }
-      renderScene(ctx, project, index - 1, prev.duration, W, H, { ...opts, selection: null });
-      ctx.restore();
+  const trDur = Math.min(scene.transitionDuration || 0.6, scene.duration / 2);
+  const active = tr !== 'cut' && index > 0 && local < trDur && !opts.noTransitions;
+  const u = active ? ease.sine(clamp(local / trDur, 0, 1)) : 1;
+  const boxed = (fn) => { ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip(); fn(); ctx.restore(); };
+  const prev = active ? project.scenes[index - 1] : null; const prevOpts = { ...opts, selection: null };
+  if (active && tr === 'slide') { // push: the old scene slides out while the new one slides in
+    boxed(() => { ctx.translate(-u * W, 0); renderScene(ctx, project, index - 1, prev.duration, W, H, prevOpts); });
+    boxed(() => { ctx.translate((1 - u) * W, 0); renderScene(ctx, project, index, local, W, H, opts); });
+  } else if (active && tr === 'zoom') {
+    boxed(() => { const k = 1.07 - 0.07 * u; ctx.translate(W / 2, H / 2); ctx.scale(k, k); ctx.translate(-W / 2, -H / 2); renderScene(ctx, project, index, local, W, H, opts); });
+    boxed(() => { const k = 1 + 0.12 * u; ctx.globalAlpha = 1 - u; ctx.translate(W / 2, H / 2); ctx.scale(k, k); ctx.translate(-W / 2, -H / 2); renderScene(ctx, project, index - 1, prev.duration, W, H, prevOpts); });
+  } else {
+    renderScene(ctx, project, index, local, W, H, opts);
+    if (active) {
+      if (tr === 'fade') { ctx.fillStyle = `rgba(0,0,0,${1 - u})`; ctx.fillRect(0, 0, W, H); }
+      else if (tr === 'dissolve' || tr === 'wipe' || tr === 'circle') {
+        ctx.save();
+        if (tr === 'dissolve') ctx.globalAlpha = 1 - u;
+        if (tr === 'wipe') { ctx.beginPath(); ctx.rect(u * W, 0, W, H); ctx.clip(); }
+        if (tr === 'circle') { ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.arc(W / 2, H / 2, u * Math.hypot(W, H) / 2, 0, Math.PI * 2, true); ctx.clip('evenodd'); }
+        renderScene(ctx, project, index - 1, prev.duration, W, H, prevOpts);
+        ctx.restore();
+      }
     }
   }
   // fade out at the very end of the movie
@@ -246,13 +221,18 @@ function renderScene(ctx, project, index, local, W, H, opts) {
   ctx.translate(-cam.x, -cam.y);
   // clamp: nothing to clamp; backgrounds are drawn beyond the stage edge by painters? Fill letterbox colour first
   ctx.fillStyle = keyed ? (scene.chroma || '#00b140') : '#000'; ctx.fillRect(-STAGE_W, -STAGE_H, STAGE_W * 3, STAGE_H * 3);
-  // background (painted at stage size, extend edges by mirroring)
+  // background (painted at stage size, extend edges by mirroring). It trails the camera a little (parallax),
+  // so a pan shows depth: far scenery moves less than the characters.
+  const shift = keyed ? 0 : clamp((cam.x - STAGE_W / 2) * 0.1, -70, 70);
+  ctx.save(); ctx.translate(shift, 0);
   ctx.save();
   def.paint(ctx, env);
   ctx.restore();
   // mirrored edges so panning/portrait outputs never show black at the sides
   ctx.save(); ctx.translate(0, 0); ctx.scale(-1, 1); ctx.beginPath(); ctx.rect(0, 0, STAGE_W, STAGE_H); ctx.clip(); def.paint(ctx, env); ctx.restore();
   ctx.save(); ctx.translate(STAGE_W * 2, 0); ctx.scale(-1, 1); ctx.beginPath(); ctx.rect(0, 0, STAGE_W, STAGE_H); ctx.clip(); def.paint(ctx, env); ctx.restore();
+  if (project.ambient !== false) ambientLife(ctx, env, def, scene);
+  ctx.restore();
 
   // weather behind actors (fog) & lighting tint
   if (env.weather === 'fog') fog(ctx, env, STAGE_H * 0.55, 0.35);
@@ -260,29 +240,63 @@ function renderScene(ctx, project, index, local, W, H, opts) {
 
   // actors sorted by depth (y)
   const audioInfo = opts.audioInfo || {};
-  const actors = (scene.actors || []).map((a, i) => ({ a, i, st: actorStateAt(a, local, scene) })).sort((p, q) => p.st.y - q.st.y);
+  const tl = itemTimeline(scene);
+  const fxOn = project.fx !== false && !keyed, actOn = project.acting !== false;
   const groundY = def.groundY * STAGE_H, horizonY = def.horizonY * STAGE_H;
-  for (const { a, i, st } of actors) {
+  const list = (scene.actors || []).map((a, i) => ({ a, i, st: actorStateAt(a, local, scene, tl), talk: activeDialog(scene, i, local, audioInfo) }));
+  const speaker = list.find((q) => q.talk && !q.talk.dialog.silent);
+  const spkEmotion = speaker ? emotionOf(project, speaker.talk.dialog) : null;
+  list.sort((p, q) => p.st.y - q.st.y);
+  if (fxOn) {
+    drawGroundMarks(ctx, scene, local, project); drawGroundItems(ctx, scene, tl, local);
+    if (!def.indoor && (env.weather === 'snow' || env.weather === 'rain')) drawFootprints(ctx, scene, local, env.weather);
+  }
+  for (const { a, i, st, talk } of list) {
     const ch = project.characters.find((c) => c.id === a.characterId);
     if (!ch) continue;
     const depth = clamp((st.y - horizonY) / Math.max(1, groundY - horizonY), 0, 1.2); // 0 = far, 1 = front
     const scale = CHAR_PX_PER_UNIT * (a.scale || 1) * lerp(0.62, 1, depth);
-    const talk = activeDialog(scene, i, local, audioInfo);
-    let pose = st.pose;
-    let mouthOpen = pose.mouthOpen || 0;
-    if (talk && !talk.dialog.silent) {
-      mouthOpen = Math.max(mouthOpen, mouthAt(talk.dialog, talk.elapsed, audioInfo));
-      // when idle and speaking, use the talking gesture so the actor looks alive
-      if (st.action.id === 'idle' && a.autoGesture !== false) {
-        const talkAct = getAction('talk');
-        pose = poseAt(talkAct, talk.elapsed);
-      }
-    }
-    // shadow
     const P = proportions(ch.appearance);
+    const tClock = local + i * 1.7, seed = i * 1.37 + index * 0.71;
+    let pose = st.pose;
+    if (actOn) pose = addLife(pose, tClock, seed, lifeStrength(st.action.id));
+    let mouthOpen = pose.mouthOpen || 0;
+    const speaking = talk && !talk.dialog.silent;
+    if (speaking) {
+      const d = talk.dialog; const el = talk.elapsed, dur = el / Math.max(0.001, talk.u);
+      mouthOpen = Math.max(mouthOpen, mouthAt(d, el, audioInfo));
+      // when idle and speaking, use the talking gesture so the actor looks alive (blended in and out)
+      if (st.action.id === 'idle' && a.autoGesture !== false) {
+        const w = smoothstep(clamp(Math.min(el / 0.25, (dur - el) / 0.25), 0, 1));
+        pose = lerpPose(pose, poseAt(getAction('talk'), el), w);
+      }
+      if (actOn) {
+        const energy = (mouthAt(d, el, audioInfo) + mouthAt(d, Math.max(0, el - 0.06), audioInfo) + mouthAt(d, Math.max(0, el - 0.12), audioInfo)) / 3;
+        const emo = emotionOf(project, d);
+        pose = talkLayer(pose, { energy, elapsed: el, u: talk.u, text: d.text, emotion: emo, seed, gesture: GESTURE_OK.has(st.action.id) });
+        if (emo && EXPRESSIONS[emo] && ['neutral', 'happy'].includes(pose.face)) { const k = smoothstep(clamp(Math.min(el / 0.2, (dur - el) / 0.3), 0, 1)); pose = { ...pose, faceFrom: pose.face, face: emo, faceK: k }; }
+      }
+    } else if (actOn && speaker && STILL_FACE.has(st.action.id)) {
+      pose = listenLayer(pose, speaker.talk.elapsed, seed);
+      const lf = LISTENER_FACE[spkEmotion]; const el = speaker.talk.elapsed;
+      if (lf && ['neutral', 'happy'].includes(pose.face) && el > 0.5) pose = { ...pose, faceFrom: pose.face, face: lf, faceK: smoothstep(clamp((el - 0.5) / 0.4, 0, 1)) };
+    }
+    if (actOn) { // eyes: look at the speaker; the speaker looks at the nearest listener; others follow whoever moves
+      let target = null;
+      if (speaking) { let best = 1e9; for (const q of list) if (q.i !== i) { const dd = Math.abs(q.st.x - st.x); if (dd < best) { best = dd; target = q.st; } } }
+      else if (speaker && speaker.i !== i) target = speaker.st;
+      else { for (const q of list) if (q.i !== i) { const q1 = actorPlaceAt(q.a, local + 0.4, scene); if (Math.abs(q1.x - q.st.x) > 6) target = q.st; } }
+      const lk = lookAt(st, target, tClock, seed); pose = { ...pose, lookX: lk.x, lookY: lk.y, headTilt: (pose.headTilt || 0) + (target ? lk.x * 1.2 : 0) };
+    }
+    if (st.action.id === 'drink' && pose.prop && pose.prop.type === 'glass') pose = { ...pose, prop: { ...pose.prop, level: 0.8 - 0.7 * st.segProgress } };
+    // shadow
     const lying = Math.abs(pose.rot || 0) > 45;
-    if (!keyed) groundShadow(ctx, st.x, st.y + 2, (lying ? 52 : 14) * scale * P.s, 4 * scale * P.s, env.tod === 'night' ? 0.35 : 0.28);
-    drawCharacter(ctx, ch.appearance, pose, { x: st.x, y: st.y, scale, facing: st.facing, orientation: st.orientation, t: local + i * 1.7, mouthOpen, blinkSeed: i + index });
+    if (!keyed) castShadow(ctx, st.x, st.y + 2, (lying ? 52 : 14) * scale * P.s, 4 * scale * P.s, env.tod, lying);
+    drawCharacter(ctx, ch.appearance, pose, { x: st.x, y: st.y, scale, facing: st.facing, orientation: st.orientation, t: tClock, mouthOpen, blinkSeed: i + index });
+    if (fxOn) {
+      drawActorFx(ctx, scene, a, local, P.s);
+      if (!def.indoor && env.weather === 'snow' && !lying) drawBreath(ctx, st.x, st.y - 89 * scale * P.s, st.facing, scale * P.s, local, i);
+    }
     // speech bubble
     if (talk && talk.dialog.bubble !== false && talk.dialog.text && !(project.subtitles && project.subtitles.mode === 'all' && project.subtitles.hideBubbles)) {
       const headY = st.y - 100 * scale * P.s - 12 * scale * P.s;
@@ -295,7 +309,7 @@ function renderScene(ctx, project, index, local, W, H, opts) {
     }
   }
   // foreground layer
-  if (def.paintFront) { ctx.save(); def.paintFront(ctx, env); ctx.restore(); }
+  if (def.paintFront) { ctx.save(); ctx.translate(-shift * 0.6, 0); def.paintFront(ctx, env); ctx.restore(); }
   // weather in front
   if (env.weather === 'rain') rain(ctx, env, 1);
   if (env.weather === 'snow') snow(ctx, env, 1);
@@ -313,6 +327,12 @@ function renderScene(ctx, project, index, local, W, H, opts) {
     ctx.beginPath(); ctx.moveTo(0, groundY); ctx.lineTo(STAGE_W, groundY); ctx.moveTo(0, horizonY); ctx.lineTo(STAGE_W, horizonY); ctx.stroke();
     ctx.restore();
   }
+}
+
+const STILL_FACE = new Set(['idle', 'talk', 'sit', 'sit_talk', 'look_around', 'think', 'nod', 'shake_head']);
+function emotionOf(project, d) {
+  if (d.emotion && EXPRESSIONS[d.emotion]) return d.emotion;
+  return project.autoEmotion === false ? null : emotionFor(d.text);
 }
 
 function leaves(ctx, env) {

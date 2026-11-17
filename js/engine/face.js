@@ -44,7 +44,12 @@ export function drawHead(ctx, app, pose, P, o) {
   const female = app.gender === 'female';
   const hair = app.hair || { style: 'short', color: '#2b1b0e' };
   const hat = app.outfit.hat || 'none';
-  const expr = EXPRESSIONS[pose.face] || EXPRESSIONS.neutral;
+  let expr = EXPRESSIONS[pose.face] || EXPRESSIONS.neutral;
+  if (pose.faceFrom && pose.faceFrom !== pose.face && pose.faceK != null && pose.faceK < 1) { // morph from the previous expression: brows glide, eyes / mouth switch half-way
+    const f = EXPRESSIONS[pose.faceFrom] || EXPRESSIONS.neutral, k = pose.faceK, late = k >= 0.45;
+    expr = { ...expr, brow: lerp(f.brow, expr.brow, k), browH: lerp(f.browH, expr.browH, k), eyes: late ? expr.eyes : f.eyes, mouth: late ? expr.mouth : f.mouth, blush: late ? expr.blush : f.blush, tears: late ? expr.tears : f.tears, sweat: late ? expr.sweat : f.sweat };
+  }
+  o.lookX = pose.lookX || 0; o.lookY = pose.lookY || 0;
   const blink = pose.blink === false ? 0 : blinkState(o.t, o.blinkSeed);
 
   ctx.save();
@@ -128,6 +133,7 @@ function drawEye(ctx, x, y, rx, ry, mode, blink, app, side, female, fo, o) {
   if (mode === 'up') { iy -= RY * 0.45; ix += 0.4; }
   if (mode === 'down') { iy += RY * 0.4; }
   if (mode === 'side') { ix += rx * 0.45; }
+  if (o.lookX || o.lookY) { ix += (o.lookX || 0) * rx * 0.5; iy += (o.lookY || 0) * RY * 0.42; }
   if (mode === 'dizzy') { ctx.strokeStyle = '#333'; ctx.lineWidth = 0.5; ctx.beginPath(); for (let a = 0; a < 12; a += 0.3) ctx.lineTo(x + Math.cos(a + o.t * 4) * a * 0.12, y + Math.sin(a + o.t * 4) * a * 0.12); ctx.stroke(); return; }
   if (mode === 'hearts') { ctx.fillStyle = '#ff4d6d'; ctx.beginPath(); const s = 1.3; ctx.moveTo(x, y + s); ctx.bezierCurveTo(x - s * 1.6, y - s * 0.4, x - s * 0.6, y - s * 1.4, x, y - s * 0.4); ctx.bezierCurveTo(x + s * 0.6, y - s * 1.4, x + s * 1.6, y - s * 0.4, x, y + s); ctx.fill(); return; }
   const irisR = rx * 0.68 * (mode === 'wide' ? 0.8 : 1);

@@ -15,6 +15,7 @@ import { newScene, newActor, newAction, newDialog, newCharacter } from './state.
 import { SCENES, getScene } from './engine/scenes/index.js';
 import { estimateTtsDuration, CAMERA_PRESETS, TRANSITIONS, WEATHER, TODS } from './engine/renderer.js';
 import { ACTIONS } from './engine/actions.js';
+import { PROP_TYPES } from './engine/props.js';
 import { STAGE_H } from './engine/util.js';
 import { roleAppearance, variantAppearance, isRoleWord } from './lookbook.js';
 
@@ -46,12 +47,25 @@ const ACTION_ALIAS = {
   sleep: 'sleep', sleeps: 'sleep', nod: 'nod', nods: 'nod', shrug: 'shrug', shrugs: 'shrug', sigh: 'sad_walk', sighs: 'sad_walk', sad: 'sad_walk',
   work: 'dig', dig: 'dig', digs: 'dig', plough: 'dig', cook: 'cook', cooks: 'cook', sweep: 'sweep', sweeps: 'sweep', chop: 'chop', chops: 'chop',
   fall: 'trip_fall', falls: 'trip_fall', trip: 'trip_fall', trips: 'trip_fall', climb: 'climb', climbs: 'climb', fight: 'fight_stance', whisper: 'whisper', whispers: 'whisper',
+  grab: 'pick_up', grabs: 'pick_up', lift: 'pick_up', lifts: 'pick_up', pickup: 'pick_up', pick: 'pick_up',
+  put: 'put_down', puts: 'put_down', drop: 'put_down', drops: 'put_down', place: 'put_down', places: 'put_down', putdown: 'put_down',
+  give: 'give', gives: 'give', handover: 'give', offer: 'give', offers: 'give', receive: 'receive', receives: 'receive',
   look: 'look_around', looks: 'look_around', phone: 'phone_call', call: 'phone_call', calls: 'phone_call', kneeling: 'kneel', praying: 'pray',
 };
 const ACTION_IDS = new Set(ACTIONS.map((a) => a.id));
+const ITEM_ALIAS = { box: 'big_box', parcel: 'gift', present: 'gift', sack: 'grain_bag', grain: 'grain_bag', grains: 'grain_bag', jug: 'bucket', pail: 'bucket', pitcher: 'bucket', spade: 'shovel', cane: 'flag', purse: 'bag', backpack: 'bag', basketful: 'basket', letter: 'paper', note: 'paper', water: 'glass', mobile: 'phone', cellphone: 'phone', tool: 'hammer' };
+/** The object named in a stage direction ("pick up the basket") -> a prop id, or null. */
+export function itemFromWords(text) {
+  const words = norm(text).replace(/[^\p{L}\p{N}\s_-]/gu, ' ').split(/\s+/).filter(Boolean);
+  for (let i = 0; i < words.length; i++) {
+    const two = words[i] + '_' + (words[i + 1] || ''); if (PROP_TYPES.includes(two)) return two;
+    const w = words[i]; if (PROP_TYPES.includes(w) && w !== 'none') return w; if (ITEM_ALIAS[w]) return ITEM_ALIAS[w];
+  }
+  return null;
+}
 /** First action word found in the text -> action id, or null. */
 export function actionFromWords(text) {
-  const words = norm(text).replace(/[^\p{L}\p{N}\s_-]/gu, ' ').split(/\s+/).filter(Boolean);
+  const words = norm(text).replace(/\bhand(s|ed)?\s+over\b/g, 'give').replace(/[^\p{L}\p{N}\s_-]/gu, ' ').split(/\s+/).filter(Boolean);
   for (let i = 0; i < words.length; i++) {
     const two = words[i] + '_' + (words[i + 1] || '');
     if (ACTION_IDS.has(two)) return two;
@@ -220,13 +234,20 @@ export function buildScenes(project, parsed, { createCharacters = true } = {}) {
           else if (/^\d+$/.test(w)) toX = Math.max(60, Math.min(1220, parseInt(w, 10)));
           else { const tc = findChar(w.replace(/\s+for.*$/, '')); const ti = tc ? sc.actors.findIndex((x) => x.characterId === tc.id) : -1; if (ti >= 0 && ti !== it.actor) toX = curX[ti] + (curX[ti] > curX[it.actor] ? -150 : 150); else warnings.push(`Scene ${bi + 1}: "${w}" is not a position or a character on stage.`); }
         }
-        const moving = toX != null && Math.abs(toX - curX[it.actor]) > 8;
+        const moving = toX != null && Math.abs(toX - curX[it.actor]) > 8 && !/\b(give|gives|hand|offer|offers)\b/.test(low);
         const id = action && action !== 'idle' ? action : moving ? 'walk' : action;
         if (!id) { warnings.push(`Scene ${bi + 1}: action not understood in "[${it.text}]".`); continue; }
         const speed = id === 'run' ? 330 : 190;
         if (dur == null) dur = moving && (id === 'walk' || id === 'run') ? Math.max(1.2, Math.abs(toX - curX[it.actor]) / speed) : id === 'idle' ? 1 : 2.2;
         dur = r2(dur);
         const seg = newAction(id, r2(t), r2(t + dur));
+        if (id === 'pick_up' || id === 'put_down' || id === 'give') {
+          const it2 = itemFromWords(rest); if (it2) seg.item = it2; else if (id === 'pick_up') { seg.item = 'basket'; warnings.push(`Scene ${bi + 1}: no object named in "[${it.text}]" – a basket is used.`); }
+          if (id === 'give') {
+            const gm = /\bto\s+(.+?)(?:\s+for\s+\d.*)?$/.exec(low); const gc = gm ? findChar(gm[1].trim()) : null; const gi = gc ? sc.actors.findIndex((x) => x.characterId === gc.id) : -1;
+            if (gi >= 0 && gi !== it.actor) { seg.to = gi; seg.facing = curX[gi] >= curX[it.actor] ? 1 : -1; } else warnings.push(`Scene ${bi + 1}: who should get the object? Write e.g. [${nameOf(it.actor)}: give basket to Sita].`);
+          }
+        }
         if (toX != null && (id === 'walk' || id === 'run' || id === 'sneak' || id === 'sad_walk')) { seg.toX = Math.round(toX); curX[it.actor] = seg.toX; }
         if (/\b(camera|front|audience)\b/.test(low)) seg.orientation = 'front'; else if (/\bface\w*\s+left|\bleft\b.*\bface/.test(low) && toX == null) seg.facing = -1; else if (/\bface\w*\s+right/.test(low) && toX == null) seg.facing = 1;
         // an action that starts while another of the same actor runs replaces the overlap
@@ -256,7 +277,8 @@ export function projectToScript(project) {
     for (const a of s.actors) for (const g of a.actions) {
       if (['talk', 'idle', 'sit_talk'].includes(g.action)) continue;
       const pos = g.toX != null ? (g.toX < 420 ? ' to left' : g.toX > 860 ? ' to right' : ' to center') : '';
-      ev.push({ t: g.start, line: `[+${nm(a)}: ${g.action.replace(/_/g, ' ')}${pos}${g.end ? ' for ' + r2(g.end - g.start) : ''}]`, order: 0 });
+      const obj = g.item ? ' ' + g.item.replace(/_/g, ' ') : ''; const toWho = g.to != null && s.actors[g.to] ? ' to ' + nm(s.actors[g.to]) : '';
+      ev.push({ t: g.start, line: `[+${nm(a)}: ${g.action.replace(/_/g, ' ')}${obj}${toWho}${pos}${g.end ? ' for ' + r2(g.end - g.start) : ''}]`, order: 0 });
     }
     ev.sort((p, q) => p.t - q.t || p.order - q.order).forEach((e) => lines.push(e.line));
     lines.push('');

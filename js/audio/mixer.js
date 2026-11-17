@@ -1,6 +1,7 @@
 // Offline mix of all clips (dialogs + music) into one AudioBuffer for export.
 
 import { sceneStart, totalDuration, dialogDuration } from '../engine/renderer.js';
+import { addSfxToMix, collectSfx, sfxEnabled } from './sfx.js';
 
 export async function renderMix(project, store, sampleRate = 48000) {
   const total = Math.max(0.1, totalDuration(project));
@@ -37,12 +38,14 @@ export async function renderMix(project, store, sampleRate = 48000) {
     src.connect(g); g.connect(ctx.destination); src.start(0);
     if (src.loop) src.stop(total);
   }
+  addSfxToMix(ctx, project, total);
   return await ctx.startRendering();
 }
 export function hasAnyAudio(project, store) {
   if (project.music && project.music.audioId && store.has(project.music.audioId)) return true;
   if (project.narration && project.narration.audioId && store.has(project.narration.audioId)) return true;
-  return project.scenes.some((s) => s.dialogs.some((d) => d.audioId && store.has(d.audioId)));
+  if (project.scenes.some((s) => s.dialogs.some((d) => d.audioId && store.has(d.audioId)))) return true;
+  return sfxEnabled(project) && collectSfx(project).length > 0;
 }
 export function hasTts(project) {
   return project.scenes.some((s) => s.dialogs.some((d) => d.source === 'tts' && !d.audioId && d.text));

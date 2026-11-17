@@ -4,6 +4,7 @@
 
 import { IDLE_POSE, composePose, lerpPose } from './character.js';
 import { ease } from './util.js';
+import { ACTION_FX } from './actionfx.js';
 
 const K = (t, p) => ({ t, ...p });
 
@@ -99,7 +100,21 @@ export const ACTIONS = [
   { id: 'fight_stance', name: 'Fight Stance', category: 'Extra', loop: true, duration: 0.8, base: { handN: 'fist', handF: 'fist', face: 'determined', torso: 8 }, keys: [K(0, { armN: [70, 125], armF: [60, 115], legN: [20, 25], legF: [-15, 15], bodyY: 0 }), K(0.5, { armN: [75, 120], armF: [65, 110], legN: [20, 28], legF: [-15, 18], bodyY: -1.5 }), K(1, { armN: [70, 125], armF: [60, 115], legN: [20, 25], legF: [-15, 15], bodyY: 0 })] },
   { id: 'lie_down', name: 'Lying Down (awake)', category: 'Extra', loop: true, duration: 3, base: { rot: -90, bodyY: 45, bodyX: -4, head: -20, face: 'happy', armN: [40, 120], armF: [10, 40], legN: [10, 10], legF: [0, 5] }, keys: [K(0, { torso: 2 }), K(0.5, { torso: 4, legN: [15, 20] }), K(1, { torso: 2 })] },
   { id: 'look_around', name: 'Looking Around', category: 'Extra', loop: true, duration: 3, base: { face: 'neutral' }, keys: [K(0, { head: 0, headTilt: 0, armN: [6, 10], armF: [-6, 10] }), K(0.3, { head: -6, headTilt: 12, eyes: 'side' }), K(0.6, { head: 2, headTilt: -14, eyes: 'open' }), K(1, { head: 0, headTilt: 0 })] },
+
+  // ---------- Carrying things (the object stays in the hand until it is put down or given away) ----------
+  { id: 'pick_up', name: 'Pick up object', category: 'Carrying', loop: false, duration: 1.8, base: { face: 'neutral', handN: 'open' }, keys: [K(0, { armN: [6, 10], armF: [-6, 10] }), K(0.28, { torso: 50, bodyY: 5, legN: [28, 48], legF: [-18, 34], armN: [72, 10], armF: [40, 20] }), K(0.5, { torso: 56, bodyY: 7, legN: [30, 52], legF: [-20, 36], armN: [88, 6], armF: [46, 20], handN: 'grip' }), K(0.8, { torso: 12, bodyY: 0, legN: [6, 6], legF: [-6, 6], armN: [12, 38], armF: [-6, 10], handN: 'grip' }), K(1, { torso: 3, armN: [10, 40], armF: [-6, 10], handN: 'grip' })] },
+  { id: 'put_down', name: 'Put object down', category: 'Carrying', loop: false, duration: 1.8, base: { face: 'neutral', handN: 'grip' }, keys: [K(0, { torso: 3, armN: [10, 40], armF: [-6, 10] }), K(0.3, { torso: 50, bodyY: 5, legN: [28, 48], legF: [-18, 34], armN: [80, 8], armF: [40, 20] }), K(0.55, { torso: 56, bodyY: 7, legN: [30, 52], legF: [-20, 36], armN: [88, 6], armF: [46, 20], handN: 'open' }), K(0.85, { torso: 10, bodyY: 0, legN: [6, 6], legF: [-6, 6], armN: [8, 10], armF: [-6, 10], handN: 'open' }), K(1, { torso: 0, armN: [6, 10], armF: [-6, 10], handN: 'open' })] },
+  { id: 'give', name: 'Give / hand over object', category: 'Carrying', loop: false, duration: 1.8, base: { face: 'happy', handN: 'grip' }, keys: [K(0, { torso: 3, armN: [10, 40], armF: [-6, 10] }), K(0.35, { torso: 8, armN: [85, 15], armF: [30, 20], handN: 'flat' }), K(0.55, { torso: 8, armN: [88, 12], armF: [30, 20], handN: 'open' }), K(0.85, { torso: 4, armN: [60, 20], armF: [-6, 10], handN: 'open' }), K(1, { torso: 2, armN: [8, 12], armF: [-6, 10], handN: 'open' })] },
+  { id: 'receive', name: 'Receive object (hands out)', category: 'Carrying', loop: false, duration: 1.8, base: { face: 'happy', handN: 'flat', handF: 'flat' }, keys: [K(0, { armN: [8, 12], armF: [-6, 10] }), K(0.3, { torso: 5, armN: [80, 20], armF: [75, 25] }), K(0.7, { torso: 5, armN: [80, 22], armF: [75, 28] }), K(1, { torso: 2, armN: [30, 30], armF: [20, 30], handN: 'grip' })] },
 ];
+
+// attach what each action leaves behind (particles, ground marks, sounds, stride length)
+for (const a of ACTIONS) {
+  a.events = [];
+  const fx = ACTION_FX[a.id]; if (!fx) continue;
+  Object.assign(a, { events: fx.events || [], mark: fx.mark, stride: fx.stride, endFx: fx.endFx });
+  if (fx.drop) { const rm = (o) => { if (o && o.fx) o.fx = o.fx.filter((f) => !fx.drop.includes(f.type)); }; rm(a.base); a.keys.forEach(rm); }
+}
 
 export const ACTION_MAP = Object.fromEntries(ACTIONS.map((a) => [a.id, a]));
 export const ACTION_CATEGORIES = [...new Set(ACTIONS.map((a) => a.category))];

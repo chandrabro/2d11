@@ -5,6 +5,7 @@
 export const STAGE_W = 1280;
 export const STAGE_H = 720;
 
+export const CHAR_PX_PER_UNIT = 3.2; // 100 character units -> 320 px at the front of the stage, scale 1
 export const TAU = Math.PI * 2;
 export const DEG = Math.PI / 180;
 
@@ -17,6 +18,7 @@ export const fract = (v) => v - Math.floor(v);
 export const ease = {
   linear: (t) => t,
   inOut: (t) => (t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t),
+  sine: (t) => 0.5 - 0.5 * Math.cos(Math.PI * t),
   in: (t) => t * t,
   out: (t) => t * (2 - t),
   inOutCubic: (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),

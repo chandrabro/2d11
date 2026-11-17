@@ -21,6 +21,16 @@ export function renderSettingsPanel(app, root) {
     h('div', { class: 'small muted', style: { alignSelf: 'end' } }, 'Fine-tune lip-sync for ALL browser voices. If the voice is heard AFTER the mouth moves, increase it; if the voice comes BEFORE, decrease it.')));
   root.append(sec);
 
+  // ---------- animation polish ----------
+  const pol = h('div', { class: 'section' }, h('h3', {}, 'Animation polish'));
+  pol.append(checkbox('Acting: breathing, nods and gestures that follow the voice, facial expressions that follow the words, eyes that look at the speaker', p.acting !== false, (v) => { p.acting = v; app.commit('acting'); }));
+  pol.append(checkbox('Expression from the text (angry, sad, scared, happy … detected from the words of each line)', p.autoEmotion !== false, (v) => { p.autoEmotion = v; app.commit('emotion'); }));
+  pol.append(checkbox('Action effects: flying soil, splashes, dust, sparks, holes, sprouting seeds, footprints in snow', p.fx !== false, (v) => { p.fx = v; app.commit('effects'); }));
+  pol.append(checkbox('Living background: birds, fireflies, dust in the light, trees swaying, parallax when the camera moves', p.ambient !== false, (v) => { p.ambient = v; app.commit('ambient'); }));
+  pol.append(checkbox('Sound effects for actions (footsteps, digging, chopping, pouring, claps …) – mixed into the exported video', p.sfx !== false, (v) => { p.sfx = v; app.commit('sfx'); }));
+  pol.append(field('Sound-effect volume', range(p.sfxVolume ?? 0.55, (v) => { p.sfxVolume = v; app.commitLazy('sfx volume'); }, { min: 0, max: 1, step: 0.05 })));
+  root.append(pol);
+
   // ---------- subtitles ----------
   const sb = ensureSubtitles(p);
   const ss = h('div', { class: 'section' }, h('h3', {}, 'Subtitles (burned into the video)'));

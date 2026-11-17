@@ -165,3 +165,31 @@ Characters created by **Script → scenes** no longer all look the same. A **rol
 Ram [wave]: Hello!          the action is played while he speaks (default: talk)
 ```
 Action words: walk, run, sit, wave, laugh, cry, angry, think, bow, hug, dance, clap, point, kneel, pray, eat, read, sleep … (any action name from the Actors tab). **Download current story as script** now also writes the movements as `[+Name: action]` lines.
+
+## Animation polish (new)
+
+Everything below works automatically on your existing stories – nothing to set up. You can switch parts off in **Settings → Animation polish**.
+
+**Movement**
+- Characters now **speed up and slow down** when they walk or run, and the feet follow the ground speed (no sliding).
+- Changing from one action to the next is **blended** (no sudden snap), and after a walk or run the body **settles** for a moment.
+- Fixed a real bug: bowing, digging, chopping, running, reading etc. used to lean/look **backwards**. They now lean forward as intended. In front view, leaning shows as a gentle squash instead of a sideways tilt.
+
+**Acting**
+- Idle **breathing, weight shift and small head movements**, so nobody freezes between lines.
+- While speaking: **head nods and hand gestures follow the loudness of the voice**; a line ending with "?" ends with a curious head tilt; "!" is stronger.
+- **Facial expression follows the words** (angry, scared, sad, surprised, happy, thinking – English, Hindi and Nepali keywords). Listeners react a little too. The brows move smoothly between expressions. Turn off with "Expression from the text".
+- **Eyes look** at the speaker; the speaker looks at the listener; others follow whoever walks.
+
+**Camera and scene**
+- A still shot now has a very slow push-in so it never looks like a frozen picture (turn off per scene with `camera.drift = false`).
+- **Slide** is now a real push (old scene slides out, new one slides in). New transition: **Zoom dissolve**.
+- Time-of-day **shadows** (long at sunset/dawn, faint at night), soft contact shadow, **parallax** when the camera pans.
+- **Living background**: birds by day, fireflies at night, dust in indoor sunlight, trees swaying, lamp flicker.
+
+**Objects and action results**
+- New actions **Pick up object**, **Put object down**, **Give / hand over**, **Receive**. The object stays in the hand while walking and talking, and stays on the ground where it was put down. In the Actors tab choose the object; for Give choose who receives it.
+- Script: `[Ram: pick up basket]`, `[Ram: walk to Sita]`, `[Ram: give basket to Sita]`, `[Sita: put down]`.
+- **Digging** throws soil, digs a hole and builds a pile. **Chopping** flies chips and splits the log. **Watering** pours a stream with ripples and wets the ground. **Sowing** drops seeds that sprout and grow. **Cooking** lights a small stove. Dust puffs for running, jumping and falling (and a skid when a run stops); sparks for sword and fighting; soap bubbles for wiping; snow/rain **footprints** and **breath mist** in snow; the glass empties while drinking.
+
+**Sound effects** – built into the app (nothing to download): footsteps (soft outside, hard indoors), digging, chopping, pouring, sweeping, clapping, thuds, sword clang, camera shutter and more. They are placed automatically from the actions and **are mixed into the exported video**. Volume / on-off in Settings.

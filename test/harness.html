@@ -1,0 +1,12 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Harness</title></head><body style="margin:0;background:#222">
+<canvas id="c" width="960" height="540"></canvas><pre id="err" style="color:#f66"></pre>
+<script type="module">
+window.addEventListener('error', (e) => { document.getElementById('err').textContent += e.message + '\n'; });
+window.addEventListener('unhandledrejection', (e) => { document.getElementById('err').textContent += String(e.reason && e.reason.stack || e.reason) + '\n'; });
+try {
+  const R = await import('../js/engine/renderer.js'); const S = await import('../js/state.js');
+  window.R = R; window.S = S;
+  window.shot = (project, time, w = 960, h = 540) => { const c = document.getElementById('c'); c.width = w; c.height = h; R.renderFrame(c.getContext('2d'), project, time, { width: w, height: h }); return c.toDataURL('image/png'); };
+  document.body.dataset.ready = '1';
+} catch (e) { document.getElementById('err').textContent += e.stack; document.body.dataset.ready = 'err'; }
+</script></body></html>

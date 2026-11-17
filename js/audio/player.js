@@ -5,6 +5,7 @@
 import { sceneStart, dialogDuration } from '../engine/renderer.js';
 import * as tts from './tts.js';
 import { resolveVoice } from './voices.js';
+import { collectSfx, sfxBuffer, sfxEnabled, sfxVolume } from './sfx.js';
 
 export class Player {
   constructor(store) {
@@ -21,6 +22,7 @@ export class Player {
     this.ttsEnabled = true;
     this.onTick = null; this.onEnd = null;
     this.gain = null;
+    this.sfxList = []; this.sfxIdx = 0; this.sfxSources = new Set();
   }
   _ensureGraph() {
     const ctx = this.store.ctx;
@@ -35,12 +37,14 @@ export class Player {
     this.time = fromTime; this._startTime = fromTime; this._startWall = performance.now();
     this.playing = true; this.started.clear();
     if (!this.ttsOnly) { this._startMusic(project, fromTime); this._startNarration(project, fromTime); }
+    this.sfxList = !this.ttsOnly && sfxEnabled(project) ? collectSfx(project) : []; this.sfxIdx = this.sfxList.findIndex((e) => e.t >= fromTime - 0.02); if (this.sfxIdx < 0) this.sfxIdx = this.sfxList.length;
     this._loop();
   }
   pause() {
     this.playing = false;
     for (const s of this.sources.values()) { try { s.stop(); } catch (e) { /* ignore */ } }
     this.sources.clear(); this.started.clear();
+    for (const s of this.sfxSources) { try { s.stop(); } catch (e) { /* ignore */ } } this.sfxSources.clear();
     if (this.musicSrc) { try { this.musicSrc.stop(); } catch (e) { /* ignore */ } this.musicSrc = null; }
     if (this.narrationSrc) { try { this.narrationSrc.stop(); } catch (e) { /* ignore */ } this.narrationSrc = null; }
     this.musicGain = this.narrationGain = null;
@@ -57,7 +61,7 @@ export class Player {
     this.time = now;
     const total = this.project.scenes.reduce((a, s) => a + s.duration, 0);
     if (now >= total) { this.pause(); this.time = total; this.onEnd && this.onEnd(); this.onTick && this.onTick(this.time); return; }
-    this._schedule(now);
+    this._schedule(now); this._scheduleSfx(now);
     this.onTick && this.onTick(now);
     requestAnimationFrame(() => this._loop());
   }
@@ -81,6 +85,16 @@ export class Player {
           else if (isTts && d.text && this.ttsEnabled && !this.muted && now - trigger < 0.6) { const v = resolveVoice(p, sc, d); tts.speak(d.text, { voice: v.voice, rate: v.rate, pitch: v.pitch, volume: d.volume ?? 1 }); }
         }
       }
+    }
+  }
+  _scheduleSfx(now) {
+    const ctx = this.store.ctx; const vol = sfxVolume(this.project);
+    while (this.sfxIdx < this.sfxList.length && this.sfxList[this.sfxIdx].t <= now + 0.12) {
+      const e = this.sfxList[this.sfxIdx++]; if (e.t < now - 0.2) continue;
+      const buf = sfxBuffer(ctx, e.type); if (!buf) continue;
+      const src = ctx.createBufferSource(); src.buffer = buf; const g = ctx.createGain(); g.gain.value = vol * e.gain; src.connect(g); g.connect(this.gain);
+      try { src.start(ctx.currentTime + Math.max(0, e.t - now)); } catch (err) { continue; }
+      this.sfxSources.add(src); src.onended = () => this.sfxSources.delete(src);
     }
   }
   _playClip(d, offset, dur) {

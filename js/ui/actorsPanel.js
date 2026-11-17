@@ -4,6 +4,7 @@ import { h, field, select, num, range, checkbox, button, round } from './dom.js'
 import { ACTIONS, ACTION_CATEGORIES, getAction } from '../engine/actions.js';
 import { newActor, newAction, setAllFacing } from '../state.js';
 import { STAGE_W, STAGE_H } from '../engine/util.js';
+import { PROP_TYPES } from '../engine/props.js';
 
 const MAX_ACTORS = 3;
 
@@ -73,6 +74,13 @@ export function renderActorsPanel(app, root) {
       field('Start (s)', num(seg.start, (v) => { const len = end - seg.start; seg.start = Math.max(0, v); seg.end = round(seg.start + len, 1); app.commit('action time'); }, { min: 0, step: 0.1 })),
       field('End (s)', num(end, (v) => { seg.end = Math.max(seg.start + 0.2, v); app.commit('action time'); }, { min: 0, step: 0.1 })),
       field('Face', select([['0', 'Auto'], ['1', 'Right'], ['-1', 'Left'], ['front', '🎥 Camera']], seg.orientation === 'front' ? 'front' : String(seg.facing || 0), (v) => { if (v === 'front') { seg.orientation = 'front'; seg.facing = 0; } else { delete seg.orientation; seg.facing = parseInt(v) || 0; } app.commit('action facing'); }))));
+    if (['pick_up', 'put_down', 'give'].includes(seg.action)) { // objects: what is picked up / put down / handed over, and to whom
+      const things = PROP_TYPES.filter((x) => x !== 'none').map((x) => [x, x.replace(/_/g, ' ')]);
+      const others = s.actors.map((o, oi) => [String(oi), (p.characters.find((c) => c.id === o.characterId) || {}).name || 'Actor ' + (oi + 1)]).filter(([oi]) => Number(oi) !== s.actors.indexOf(a));
+      item.append(h('div', { class: 'grid2' },
+        field(seg.action === 'pick_up' ? 'Object to pick up' : seg.action === 'give' ? 'Object (if not already held)' : 'Object (if not already held)', select(seg.action === 'pick_up' ? things : [['', '(whatever is in the hand)'], ...things], seg.item || (seg.action === 'pick_up' ? 'basket' : ''), (v) => { seg.item = v || undefined; app.commit('item'); })),
+        seg.action === 'give' ? field('Give to', select([['-1', '(nobody – put it on the ground)'], ...others], String(seg.to ?? -1), (v) => { seg.to = Number(v) >= 0 ? Number(v) : undefined; app.commit('give to'); })) : h('div', { class: 'small muted', style: { alignSelf: 'end' } }, 'It stays in the hand until a "Put object down" or "Give" action.')));
+    }
     const hasMove = seg.toX != null || seg.toY != null;
     const moveRow = h('div', { class: 'actor-pos' },
       field('Move to X', num(seg.toX ?? a.x, (v) => { seg.toX = v; if (seg.toY == null) seg.toY = a.y; app.commit('move'); }, { min: -100, max: STAGE_W + 100, step: 10 })),

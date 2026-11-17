@@ -54,9 +54,10 @@ function lerpArr(a, b, t) { return [lerp(a[0], b[0], t), lerp(a[1], b[1], t)]; }
 export function lerpPose(a, b, t) {
   if (t <= 0) return a; if (t >= 1) return b;
   const p = { ...b };
-  for (const k of ['bodyX', 'bodyY', 'rot', 'torso', 'head', 'headTilt', 'footN', 'footF', 'mouthOpen']) p[k] = lerp(a[k] || 0, b[k] || 0, t);
+  for (const k of ['bodyX', 'bodyY', 'rot', 'torso', 'head', 'headTilt', 'footN', 'footF', 'mouthOpen', 'lookX', 'lookY']) p[k] = lerp(a[k] || 0, b[k] || 0, t);
   for (const k of ['armN', 'armF', 'legN', 'legF']) p[k] = lerpArr(a[k] || [0, 0], b[k] || [0, 0], t);
-  for (const k of ['handN', 'handF', 'face', 'eyes', 'sit', 'lookBack']) p[k] = t < 0.5 ? a[k] : b[k];
+  for (const k of ['handN', 'handF', 'eyes', 'sit', 'lookBack']) p[k] = t < 0.5 ? a[k] : b[k];
+  p.face = b.face; p.faceFrom = a.face; p.faceK = t; // the face morphs (brows move smoothly) instead of switching
   p.prop = t < 0.5 ? a.prop : b.prop;
   if (a.prop && b.prop && a.prop.type === b.prop.type) p.prop = { ...b.prop, angle: lerp(a.prop.angle || 0, b.prop.angle || 0, t), dx: lerp(a.prop.dx || 0, b.prop.dx || 0, t), dy: lerp(a.prop.dy || 0, b.prop.dy || 0, t) };
   p.fx = t < 0.5 ? a.fx : b.fx;
@@ -96,6 +97,8 @@ function segment(ctx, L, w, color, { round = true, taper = 0.85 } = {}) {
   ctx.lineWidth = 0.5; ctx.strokeStyle = rgba(outlineColor(color), 0.6); ctx.stroke();
 }
 function rot(ctx, deg) { ctx.rotate(-deg * DEG); }
+/** Forward lean for torso / head: + = toward the direction the character faces (bow, dig, read), - = backwards. */
+function lean(ctx, deg) { ctx.rotate(deg * DEG); }
 
 function drawHand(ctx, r, color, shape) {
   ctx.lineWidth = 0.5; ctx.strokeStyle = rgba(outlineColor(color), 0.7);
@@ -328,13 +331,13 @@ function drawBodyFront(ctx, P, pose, app, colors, inHand, t, opts) {
   // legs
   drawLegFront(ctx, P, pose, 'F', colors, app); drawLegFront(ctx, P, pose, 'N', colors, app);
   ctx.save();
-  ctx.translate(0, P.hipY); rot(ctx, pose.torso || 0); ctx.translate(0, -P.hipY);
+  ctx.translate(0, P.hipY); { const k = Math.cos(clamp(pose.torso || 0, -70, 70) * DEG * 0.7); ctx.scale(1, k); } ctx.translate(0, -P.hipY);
   // backpack / shell peeking out behind the shoulders
   if (acc.includes('backpack')) fillRound(ctx, -P.shoulderHW - 3.5, P.shoulderY - 1, P.shoulderHW * 2 + 7, 21, 4, o.bagColor || '#2e7d32');
   drawTorso(ctx, P, pose, app, colors, true);
   fillRound(ctx, -P.neckW, P.neckTop - 1, P.neckW * 2, P.shoulderY - P.neckTop + 3, 1.5, shade(app.skin, -0.08));
   ctx.save();
-  ctx.translate(0, P.neckTop); rot(ctx, pose.head || 0); if (pose.headTilt) ctx.rotate(pose.headTilt * DEG); ctx.translate(0, -P.neckTop);
+  ctx.translate(0, P.neckTop); { const k = Math.cos(clamp(pose.head || 0, -50, 50) * DEG * 0.6); ctx.scale(1, k); ctx.translate(0, (pose.head || 0) * 0.05); } if (pose.headTilt) ctx.rotate(pose.headTilt * DEG); ctx.translate(0, -P.neckTop);
   drawHead(ctx, app, pose, P, { front: true, t, mouthOpen: opts.mouthOpen ?? pose.mouthOpen ?? 0, blinkSeed: opts.blinkSeed || 0, lookBack: false });
   ctx.restore();
   // both arms in front of the torso, hands clearly visible
@@ -374,20 +377,23 @@ export function drawCharacter(ctx, app, pose, opts) {
       fillRound(ctx, -9, sy, 18, 3, 1, '#6d4c41');
       fillRect(ctx, -7, sy + 3, 2.2, -sy - 3, '#5d4037'); fillRect(ctx, 5, sy + 3, 2.2, -sy - 3, '#5d4037');
     }
-    // --- far limbs ---
+    // --- far leg (attached to the hips, never leans with the torso) ---
     if (!pose.sit) drawLeg(ctx, P, pose, 'F', colors, app); else drawSitLeg(ctx, P, pose, 'F', colors, app);
-    drawArm(ctx, P, pose, 'F', colors, app, inHand('F'), t);
-    // --- torso (rotates about hips) ---
+    // --- upper body: leans forward (+) / back (-) about the hips; arms and head ride on it ---
     ctx.save();
-    ctx.translate(0, P.hipY); rot(ctx, pose.torso || 0); ctx.translate(0, -P.hipY);
+    ctx.translate(0, P.hipY); lean(ctx, pose.torso || 0); ctx.translate(0, -P.hipY);
+    drawArm(ctx, P, pose, 'F', colors, app, inHand('F'), t);
+    // near leg stays on the hips: undo the lean for it
+    ctx.save();
+    ctx.translate(0, P.hipY); lean(ctx, -(pose.torso || 0)); ctx.translate(0, -P.hipY);
     if (!pose.sit) drawLeg(ctx, P, pose, 'N', colors, app); else drawSitLeg(ctx, P, pose, 'N', colors, app);
-    // the near leg is attached to hips, not torso: undo torso rotation for leg is skipped for simplicity (small angles)
+    ctx.restore();
     drawTorso(ctx, P, pose, app, colors);
     // neck
     fillRound(ctx, -P.neckW, P.neckTop - 1, P.neckW * 2, P.shoulderY - P.neckTop + 3, 1.5, shade(app.skin, -0.08));
-    // head
+    // head (+ = looks down / forward, - = looks up)
     ctx.save();
-    ctx.translate(0, P.neckTop); rot(ctx, pose.head || 0); if (pose.headTilt) ctx.rotate(pose.headTilt * DEG); ctx.translate(0, -P.neckTop);
+    ctx.translate(0, P.neckTop); lean(ctx, pose.head || 0); if (pose.headTilt) ctx.rotate(pose.headTilt * DEG); ctx.translate(0, -P.neckTop);
     drawHead(ctx, app, pose, P, { front, t, mouthOpen: opts.mouthOpen ?? pose.mouthOpen ?? 0, blinkSeed: opts.blinkSeed || 0, lookBack: pose.lookBack });
     ctx.restore();
     // near arm (in front)

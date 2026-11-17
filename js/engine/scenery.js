@@ -8,6 +8,7 @@ import {
   roundRect, ellipse, circle, poly, curve, fillRect, fillRound, fillEllipse, fillCircle,
   fillPoly, strokeLine, linGrad, radGrad, groundShadow, withAlpha,
 } from './util.js';
+import { sway } from './ambient.js';
 
 export { STAGE_W, STAGE_H };
 
@@ -183,7 +184,8 @@ export function water(ctx, env, y, h, color = '#3b8bd0', deep = '#1f5f9e') {
 }
 
 // ---------- vegetation ----------
-export function treeRound(ctx, env, x, y, size = 120, seed = 1, leaf = '#3f8f3a', trunk = '#6b4a2b') {
+export function treeRound(ctx, env, x, y, size = 120, seed = 1, leaf = '#3f8f3a', trunk = '#6b4a2b') { sway(ctx, env, x, y, () => treeRoundRaw(ctx, env, x, y, size, seed, leaf, trunk)); }
+function treeRoundRaw(ctx, env, x, y, size = 120, seed = 1, leaf = '#3f8f3a', trunk = '#6b4a2b') {
   const r = rng(hash('tree' + seed));
   const tw = size * 0.12, th = size * 0.55;
   groundShadow(ctx, x, y, size * 0.55, size * 0.1, 0.22);
@@ -196,7 +198,8 @@ export function treeRound(ctx, env, x, y, size = 120, seed = 1, leaf = '#3f8f3a'
   ctx.fillStyle = mid; blobs.forEach(([bx, by, br]) => { circle(ctx, x + bx * size, cy + by * size, br * size); ctx.fill(); });
   ctx.fillStyle = light; blobs.slice(0, 5).forEach(([bx, by, br]) => { circle(ctx, x + bx * size - br * size * 0.25, cy + by * size - br * size * 0.3, br * size * 0.45); ctx.fill(); });
 }
-export function treePine(ctx, env, x, y, size = 140, leaf = '#2f6b3a', trunk = '#5b3d22') {
+export function treePine(ctx, env, x, y, size = 140, leaf = '#2f6b3a', trunk = '#5b3d22') { sway(ctx, env, x, y, () => treePineRaw(ctx, env, x, y, size, leaf, trunk)); }
+function treePineRaw(ctx, env, x, y, size = 140, leaf = '#2f6b3a', trunk = '#5b3d22') {
   groundShadow(ctx, x, y, size * 0.4, size * 0.08, 0.2);
   fillRect(ctx, x - size * 0.05, y - size * 0.25, size * 0.1, size * 0.25, lit(env, trunk));
   const tiers = 4;
@@ -206,7 +209,8 @@ export function treePine(ctx, env, x, y, size = 140, leaf = '#2f6b3a', trunk = '
     fillPoly(ctx, [[x, top], [x + w, bot], [x + w * 0.2, bot]], rgba('#000', 0.1));
   }
 }
-export function treePalm(ctx, env, x, y, size = 160, lean = 0.2) {
+export function treePalm(ctx, env, x, y, size = 160, lean = 0.2) { sway(ctx, env, x, y, () => treePalmRaw(ctx, env, x, y, size, lean)); }
+function treePalmRaw(ctx, env, x, y, size = 160, lean = 0.2) {
   groundShadow(ctx, x, y, size * 0.3, size * 0.07, 0.2);
   const topX = x + lean * size, topY = y - size;
   ctx.strokeStyle = lit(env, '#8a6a3f'); ctx.lineWidth = size * 0.08; ctx.lineCap = 'round';
@@ -302,7 +306,7 @@ export function streetLamp(ctx, env, x, y, h = 220) {
   fillRect(ctx, x - 4, y - h, 8, h, lit(env, '#3a3a40'));
   fillRect(ctx, x - 14, y - h, 28, 8, lit(env, '#3a3a40'));
   fillRound(ctx, x - 12, y - h - 24, 24, 26, 5, env.tod === 'night' ? '#ffe9a8' : lit(env, '#e9eef5'));
-  if (env.tod === 'night') { ctx.fillStyle = radGrad(ctx, x, y - h - 10, 0, h, [[0, 'rgba(255,230,160,0.35)'], [1, 'rgba(255,230,160,0)']]); poly(ctx, [[x - 20, y - h], [x + 20, y - h], [x + 140, y + 10], [x - 140, y + 10]]); ctx.fill(); }
+  if (env.tod === 'night') { ctx.fillStyle = radGrad(ctx, x, y - h - 10, 0, h, [[0, 'rgba(255,230,160,' + (0.33 + Math.sin(env.t * 21 + x) * 0.03 + Math.sin(env.t * 7.3) * 0.02).toFixed(3) + ')'], [1, 'rgba(255,230,160,0)']]); poly(ctx, [[x - 20, y - h], [x + 20, y - h], [x + 140, y + 10], [x - 140, y + 10]]); ctx.fill(); }
 }
 export function car(ctx, env, x, y, w = 160, color = '#d63031', dir = 1) {
   ctx.save(); ctx.translate(x, y); ctx.scale(dir, 1);
